@@ -90,6 +90,7 @@ def RNNGenCost(batch, model, params, misc):
     dYs.append(P)
 
   # backprop the RNN
+
   grads = BatchGenerator.backward(dYs, gen_caches)
 
   # add L2 regularization cost and gradients
@@ -286,13 +287,13 @@ if __name__ == "__main__":
   parser.add_argument('--rnn_feed_once', dest='rnn_feed_once', type=int, default=0, help='feed image to the rnn only single time?')
 
   # optimization parameters
-  parser.add_argument('-c', '--regc', dest='regc', type=float, default=1e-8, help='regularization strength')
+  parser.add_argument('-c', '--regc', dest='regc', type=float, default=1e-5, help='regularization strength')
   parser.add_argument('-m', '--max_epochs', dest='max_epochs', type=int, default=50, help='number of epochs to train for')
   parser.add_argument('--solver', dest='solver', type=str, default='rmsprop', help='solver type: vanilla/adagrad/adadelta/rmsprop')
   parser.add_argument('--momentum', dest='momentum', type=float, default=0.0, help='momentum for vanilla sgd')
   parser.add_argument('--decay_rate', dest='decay_rate', type=float, default=0.9, help='decay rate for adadelta/rmsprop')
   parser.add_argument('--smooth_eps', dest='smooth_eps', type=float, default=1e-8, help='epsilon smoothing for rmsprop/adagrad/adadelta')
-  parser.add_argument('-l', '--learning_rate', dest='learning_rate', type=float, default=1e-4, help='solver learning rate')
+  parser.add_argument('-l', '--learning_rate', dest='learning_rate', type=float, default=1e-3, help='solver learning rate')
   parser.add_argument('-b', '--batch_size', dest='batch_size', type=int, default=100, help='batch size')
   parser.add_argument('--grad_clip', dest='grad_clip', type=float, default=20, help='clip gradients (normalized by batch size)? elementwise. if positive, at what threshold?')
   parser.add_argument('--drop_prob_encoder', dest='drop_prob_encoder', type=float, default=0.5, help='what dropout to apply right after the encoder to an RNN/LSTM')
