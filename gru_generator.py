@@ -1,8 +1,11 @@
 
 import numpy as np
 from imagernn.utils import initw
-from imagernn.utils import  initw_g
-
+from imagernn.utils import  initw_orthogonal
+import theano as theano
+import theano.tensor as T
+from theano.gradient import grad_clip
+import time
 class GRUGenerator:
 
   @staticmethod
@@ -12,15 +15,11 @@ class GRUGenerator:
       # Recurrent weights: take x_t, h_{t-1}, and bi
       # as unit
       # and produce the 3 gates and the input to cell signal
-      # model['ones'] = np.ones(3*hidden_size)
-      # model['U'] = initw(input_size , 3 * hidden_size)
-      # model['W'] = initw(hidden_size , 3 * hidden_size)
-      model['GRU'] =initw_g(input_size+hidden_size+1 , 3 * hidden_size)
+      model['GRU'] =initw(input_size+hidden_size+1 , 3 * hidden_size)
       # Decoder weights (e.g. mapping to vocabulary)
-      model['Wd'] = initw_g(hidden_size, output_size)  # decoder
+      model['Wd'] = initw(hidden_size, output_size)  # decoder
       model['bd'] = np.zeros((1, output_size))
       print "=============initialize gru generator=========="
-
 
       update = ['GRU', 'Wd', 'bd']
       regularize = ['GRU', 'Wd']
@@ -119,6 +118,7 @@ class GRUGenerator:
         cache['tanhC_version'] = tanhC_version
         cache['drop_prob_encoder'] = drop_prob_encoder
         cache['drop_prob_decoder'] = drop_prob_decoder
+        cache['Y'] = Y
         if drop_prob_encoder > 0: cache['U'] = U  # keep the dropout masks around for backprop
         if drop_prob_decoder > 0: cache['U2'] = U2
       return Y, cache
@@ -134,6 +134,12 @@ class GRUGenerator:
     GRU = cache['GRU']
     X = cache['X']
     Hg = cache['Hg']
+    Y = cache['Y']
+    # cost = T.sum(T.nnet.categorical_crossentropy(Y,y))
+    # GRU = theano.shared(name='GRU', value=GRU.astype(theano.config.floatX))
+    # Wd = theano.shared(name='Wd', value=Wd.astype(theano.config.floatX))
+    # bd = theano.shared(name='bd', value=bd.astype(theano.config.floatX))
+
     # tanhC_version = cache['tanhC_version']
     drop_prob_encoder = cache['drop_prob_encoder']
     drop_prob_decoder = cache['drop_prob_decoder']
@@ -162,8 +168,8 @@ class GRUGenerator:
         if t>0:
 
             dIFOGf[t, 2 * d:] = (I-IFOGf[t,:d]) * dHout[t]
-            dIFOGf[t, :d] = IFOGf[t, 2 * d:] * dHout[t] + Hout[t-1]* dHout[t]
-            dHout[t-1]+=dIFOGf[t, :d]* dHout[t]
+            dIFOGf[t, :d] = -IFOGf[t, 2 * d:] * dHout[t] + Hout[t-1]* dHout[t]
+            # dHout[t-1]+=dIFOGf[t, :d]* dHout[t]
 
 
         # backprop activation functions
@@ -175,14 +181,16 @@ class GRUGenerator:
         dGRU[:,:2*d] += np.outer(Hin[t], dIFOG[t,:2*d])
         dGRU[:,2*d:] += np.outer(Hg[t] , dIFOG[t,2*d:])
 
-        dHin[t] = dIFOG[t,:3*d].dot(GRU[:,:3*d].transpose())
-        dHg[t] =  dIFOG[t,3*d:].dot(GRU[:,3*d:].transpose())
+        dHin[t] = dIFOG[t,:2*d].dot(GRU[:,:2*d].transpose())
+
+        dHg[t] =  dIFOG[t,2*d:].dot(GRU[:,2*d:].transpose())
+        # print dHin.shape, dHg.shape
         # backprop the identity transforms into Hin
+        # dX[t] = dHin[t, 1:1 + d] +dHg[t,1:1+d]
         dX[t] = dHin[t, 1:1 + d]
         if t > 0:
 
-            dHout[t - 1] += (dHin[t, 1 + d:])
-                             # +dHg[t,1+d:]*IFOG[t,d:2*d])
+            dHout[t - 1] += (dIFOGf[t, :d]* dHout[t])*(dHin[t, 1 + d:]+dHg[t,1+d:]*IFOG[t,d:2*d])
 
     if drop_prob_encoder > 0:  # backprop encoder dropout
         dX *= cache['U']
@@ -207,8 +215,8 @@ class GRUGenerator:
       d = model['Wd'].shape[0]  # size of hidden layer
       Wd = model['Wd']
       bd = model['bd']
-      U = model['U']
-      W = model['W']
+      # U = model['U']
+      # W = model['W']
 
       # lets define a helper function that does a single LSTM tick
       def GRUtick(x, h_prev):
