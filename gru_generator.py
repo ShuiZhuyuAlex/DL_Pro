@@ -1,11 +1,7 @@
 
 import numpy as np
-import theano as theano
-import theano.tensor as T
-from theano.gradient import grad_clip
-import time
-import operator
 from imagernn.utils import initw
+from imagernn.utils import  initw_g
 
 class GRUGenerator:
 
@@ -16,19 +12,15 @@ class GRUGenerator:
       # Recurrent weights: take x_t, h_{t-1}, and bi
       # as unit
       # and produce the 3 gates and the input to cell signal
-      model['ones'] = np.ones(3*hidden_size)
-      model['U'] = initw(input_size , 3 * hidden_size)
-      model['W'] = initw(hidden_size , 3 * hidden_size)
-      model['GRU'] = np.row_stack([model['ones'],model['U'],model['W']])
+      # model['ones'] = np.ones(3*hidden_size)
+      # model['U'] = initw(input_size , 3 * hidden_size)
+      # model['W'] = initw(hidden_size , 3 * hidden_size)
+      model['GRU'] =initw_g(input_size+hidden_size+1 , 3 * hidden_size)
       # Decoder weights (e.g. mapping to vocabulary)
-      model['Wd'] = initw(hidden_size, output_size)  # decoder
+      model['Wd'] = initw_g(hidden_size, output_size)  # decoder
       model['bd'] = np.zeros((1, output_size))
       print "=============initialize gru generator=========="
 
-      # Theano: Created shared variables
-      Wd = theano.shared(name='Wd', value=model['Wd'].astype(theano.config.floatX))
-      bd = theano.shared(name='bd', value=model['bd'].astype(theano.config.floatX))
-      GRU = theano.shared(name='GRU', value=model['GRU'].astype(theano.config.floatX))
 
       update = ['GRU', 'Wd', 'bd']
       regularize = ['GRU', 'Wd']
@@ -66,26 +58,6 @@ class GRUGenerator:
           U = (np.random.rand(*(X.shape)) < (1 - drop_prob_encoder)) * scale  # generate scaled mask
           X *= U  # drop!
 
-      # follows http://arxiv.org/pdf/1409.2329.pdf
-
-      # U = model['U']
-      # W = model['W']
-      # ones = model['ones']
-      # n = X.shape[0]
-      # d = model['Wd'].shape[0]  # size of hidden layer
-      # output_size = model['W'].shape[1]
-      # z = np.zeros((n,d))
-      # r = np.zeros((n,d))
-      # c= np.zeros((n,d))
-      # s= np.zeros((n,d))
-      # s[-1] = np.zeros(d)
-      # U = theano.shared(name='U', value=model['U'].astype(theano.config.floatX))
-      # W = theano.shared(name='W', value=model['W'].astype(theano.config.floatX))
-      # GRU = theano.shared(name='GRU', value=model['GRU'].astype(theano.config.floatX))
-      # X = theano.shared(name='X', value=X.astype(theano.config.floatX))
-      # s = theano.shared(name='s', value=s.astype(theano.config.floatX))
-      # print ((X[0]).dot(U[0,:d])).shape
-      # print ( (s[0-1]).dot(W[0,:d])).shape
 
       GRU = model['GRU']
 
@@ -123,18 +95,6 @@ class GRUGenerator:
               scale2 = 1.0 / (1.0 - drop_prob_decoder)
               U2 = (np.random.rand(*(Hout.shape)) < (1 - drop_prob_decoder)) * scale2  # generate scaled mask
               Hout *= U2  # drop!
-      #
-      #   z[t] = T.nnet.hard_sigmoid((X[t]).dot(U[t,:d]) + (s[t-1]).dot(W[t,:d]))
-      #
-      #   r[t] = T.nnet.hard_sigmoid(U[t,d:2*d].dot(X[t]) + W[t,d:2*d].dot(s[t-1]))
-      #   c[t] = T.tanh(U[t,2*d:].dot(X[t]) + W[t,2*d:].dot(s[t-1] * r[t]))
-      #   s[t] = (T.ones_like(z[t]) - z[t]) * c[t] + z[t] * s[t-1]
-      #
-      # if drop_prob_decoder > 0:  # if we want dropout on the decoder
-      #   if not predict_mode:  # and we are in training mode
-      #     scale2 = 1.0 / (1.0 - drop_prob_decoder)
-      #     U2 = (np.random.rand(*(s.shape)) < (1 - drop_prob_decoder)) * scale2  # generate scaled mask
-      #     s *= U2  # drop!
 
       # decoder at the end
       Wd = model['Wd']
@@ -148,18 +108,6 @@ class GRUGenerator:
       cache = {}
       if not predict_mode:
         # we can expect to do a backward pass
-        # cache['U']= U
-        # cache['W'] = W
-        # cache['GRU'] =  np.row_stack([model['ones'],model['U'],model['W']])
-        # cache['s'] = s
-        # cache['Wd'] = Wd
-        # cache['bd'] = bd
-        # cache['X'] = X
-        # cache['ones'] = ones
-        # cache['tanhC_version'] = tanhC_version
-        # cache['drop_prob_encoder'] = drop_prob_encoder
-        # cache['drop_prob_decoder'] = drop_prob_decoder
-        # cache['Y'] = Y
         cache['GRU'] = GRU
         cache['Hout'] = Hout
         cache['Hg'] = Hg
@@ -177,16 +125,7 @@ class GRUGenerator:
 
   @staticmethod
   def backward(dY, cache):
-    #
-    # Wd = cache['Wd']
-    # bd = cache['bd']
-    # s = cache['s']
-    # ones = cache['ones']
-    # GRU = cache['GRU']
-    # U = cache['U']
-    # W = cache['W']
-    # X = cache['X']
-    # Y = cache['Y']
+
     Wd = cache['Wd']
     Hout = cache['Hout']
     IFOG = cache['IFOG']
@@ -242,7 +181,8 @@ class GRUGenerator:
         dX[t] = dHin[t, 1:1 + d]
         if t > 0:
 
-            dHout[t - 1] += (dHin[t, 1 + d:] +dHg[t,1+d:]*IFOG[t,d:2*d])
+            dHout[t - 1] += (dHin[t, 1 + d:])
+                             # +dHg[t,1+d:]*IFOG[t,d:2*d])
 
     if drop_prob_encoder > 0:  # backprop encoder dropout
         dX *= cache['U']
