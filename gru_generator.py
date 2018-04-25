@@ -8,29 +8,34 @@ import operator
 from imagernn.utils import initw
 
 class GRUGenerator:
-    def init(input_size, hidden_size, output_size):
+
+  @staticmethod
+  def init(input_size, hidden_size, output_size):
+
       model = {}
-      # Recurrent weights: take x_t, h_{t-1}, and bias unit
+      # Recurrent weights: take x_t, h_{t-1}, and bi
+      # as unit
       # and produce the 3 gates and the input to cell signal
-      model['ones'] = np.ones(1,3*hidden_size)
+      model['ones'] = np.ones(3*hidden_size)
       model['U'] = initw(input_size , 3 * hidden_size)
       model['W'] = initw(hidden_size , 3 * hidden_size)
-      model['GUR'] = np.row_stack([model['ones'],model['U'],model['W']])
+      model['GRU'] = np.row_stack([model['ones'],model['U'],model['W']])
       # Decoder weights (e.g. mapping to vocabulary)
       model['Wd'] = initw(hidden_size, output_size)  # decoder
       model['bd'] = np.zeros((1, output_size))
-      print "=============initialize lstm generator=========="
+      print "=============initialize gru generator=========="
 
       # Theano: Created shared variables
-      model['Wd'] = theano.shared(name='Wd', value=model['Wd'].astype(theano.config.floatX))
-      model['bd'] = theano.shared(name='bd', value=model['bd'].astype(theano.config.floatX))
-      model['GRU'] = theano.shared(name='GRU', value=model['GRU'].astype(theano.config.floatX))
+      Wd = theano.shared(name='Wd', value=model['Wd'].astype(theano.config.floatX))
+      bd = theano.shared(name='bd', value=model['bd'].astype(theano.config.floatX))
+      GRU = theano.shared(name='GRU', value=model['GRU'].astype(theano.config.floatX))
 
-      update = ['GUR', 'Wd', 'bd']
-      regularize = ['GUR', 'Wd']
+      update = ['GRU', 'Wd', 'bd']
+      regularize = ['GRU', 'Wd']
       return {'model': model, 'update': update, 'regularize': regularize}
 
-    def forward(Xi, Xs, model, params, **kwargs):
+  @staticmethod
+  def forward(Xi, Xs, model, params, **kwargs):
       """
       Xi is 1-d array of size D (containing the image representation)
       Xs is N x D (N time steps, rows are data containng word representations), and
@@ -63,88 +68,190 @@ class GRUGenerator:
 
       # follows http://arxiv.org/pdf/1409.2329.pdf
 
-      U = model['U']
-      W = model['W']
-      ones = model['ones']
+      # U = model['U']
+      # W = model['W']
+      # ones = model['ones']
+      # n = X.shape[0]
+      # d = model['Wd'].shape[0]  # size of hidden layer
+      # output_size = model['W'].shape[1]
+      # z = np.zeros((n,d))
+      # r = np.zeros((n,d))
+      # c= np.zeros((n,d))
+      # s= np.zeros((n,d))
+      # s[-1] = np.zeros(d)
+      # U = theano.shared(name='U', value=model['U'].astype(theano.config.floatX))
+      # W = theano.shared(name='W', value=model['W'].astype(theano.config.floatX))
+      # GRU = theano.shared(name='GRU', value=model['GRU'].astype(theano.config.floatX))
+      # X = theano.shared(name='X', value=X.astype(theano.config.floatX))
+      # s = theano.shared(name='s', value=s.astype(theano.config.floatX))
+      # print ((X[0]).dot(U[0,:d])).shape
+      # print ( (s[0-1]).dot(W[0,:d])).shape
+
+      GRU = model['GRU']
+
       n = X.shape[0]
       d = model['Wd'].shape[0]  # size of hidden layer
-      output_size = model['W'].shape[1]
-      z,r,c,s = np.zeros((n,d))
-
-      s[-1] = np.zeros(d)
+      Hin = np.zeros((n, GRU.shape[0]))  # xt, ht-1, bias  hin-->hz
+      Hg = np.zeros((n, GRU.shape[0]))
+      Hout = np.zeros((n, d))  # hout --->hr
+      IFOG = np.zeros((n, d * 3))
+      IFOGf = np.zeros((n, d * 3))
       for t in xrange(n):
         # set input
+        prev = np.zeros(d) if t == 0 else Hout[t - 1]
+        Hin[t, 0] = 1
+        Hin[t, 1:1 + d] = X[t]
+        Hin[t, 1 + d:] = prev
 
-        z[t] = T.nnet.hard_sigmoid(U[t,:d].dot(X[t]) + W[t,:d].dot(s[t-1]))
+        # compute all gate activations. dots:
+        IFOG[t, :2 * d] = Hin[t].dot(GRU[:, :2 * d])
 
-        r[t] = T.nnet.hard_sigmoid(U[t,d:2*d].dot(X[t]) + W[t,d:2*d].dot(s[t-1]))
-        c[t] = T.tanh(U[t,2*d:].dot(X[t]) + W[t,2*d:].dot(s[t-1] * r[t]))
-        s[t] = (T.ones_like(z[t]) - z[t]) * c[t] + z[t] * s[t-1]
+        Hg[t, :1 + d] = Hin[t, :1 + d]
+        Hg[t, 1 + d:] = Hin[t, 1 + d:] * IFOG[t, d:2 * d]
+        IFOG[t, 2 * d:] = Hg[t].dot(GRU[:, 2 * d:])
+
+        # non-linearities
+        IFOGf[t, :2 * d] = 1.0 / (1.0 + np.exp(-IFOG[t, :2 * d]))  # sigmoids; these are the gates
+        IFOGf[t, 2 * d:] = np.tanh(IFOG[t, 2 * d:])  # tanh
+
+        # compute the cell activation
+        Hout[t] = (1 - IFOGf[t, :d]) * IFOGf[t, 2 * d:]
+        if t > 0: Hout[t] += IFOGf[t, :d] * Hout[t - 1]
 
       if drop_prob_decoder > 0:  # if we want dropout on the decoder
-        if not predict_mode:  # and we are in training mode
-          scale2 = 1.0 / (1.0 - drop_prob_decoder)
-          U2 = (np.random.rand(*(s.shape)) < (1 - drop_prob_decoder)) * scale2  # generate scaled mask
-          s *= U2  # drop!
+          if not predict_mode:  # and we are in training mode
+              scale2 = 1.0 / (1.0 - drop_prob_decoder)
+              U2 = (np.random.rand(*(Hout.shape)) < (1 - drop_prob_decoder)) * scale2  # generate scaled mask
+              Hout *= U2  # drop!
+      #
+      #   z[t] = T.nnet.hard_sigmoid((X[t]).dot(U[t,:d]) + (s[t-1]).dot(W[t,:d]))
+      #
+      #   r[t] = T.nnet.hard_sigmoid(U[t,d:2*d].dot(X[t]) + W[t,d:2*d].dot(s[t-1]))
+      #   c[t] = T.tanh(U[t,2*d:].dot(X[t]) + W[t,2*d:].dot(s[t-1] * r[t]))
+      #   s[t] = (T.ones_like(z[t]) - z[t]) * c[t] + z[t] * s[t-1]
+      #
+      # if drop_prob_decoder > 0:  # if we want dropout on the decoder
+      #   if not predict_mode:  # and we are in training mode
+      #     scale2 = 1.0 / (1.0 - drop_prob_decoder)
+      #     U2 = (np.random.rand(*(s.shape)) < (1 - drop_prob_decoder)) * scale2  # generate scaled mask
+      #     s *= U2  # drop!
 
       # decoder at the end
       Wd = model['Wd']
       bd = model['bd']
       # NOTE1: we are leaving out the first prediction, which was made for the image
       # and is meaningless.
-      Y = s[1:, :].dot(Wd) + bd
+      Y = Hout[1:, :].dot(Wd) + bd
+
+     #Y.shape #(8,2538)
 
       cache = {}
       if not predict_mode:
         # we can expect to do a backward pass
-        cache['U']= U
-        cache['W'] = W
-        cache['GRU'] =  np.row_stack([model['ones'],model['U'],model['W']])
-        cache['s'] = s
+        # cache['U']= U
+        # cache['W'] = W
+        # cache['GRU'] =  np.row_stack([model['ones'],model['U'],model['W']])
+        # cache['s'] = s
+        # cache['Wd'] = Wd
+        # cache['bd'] = bd
+        # cache['X'] = X
+        # cache['ones'] = ones
+        # cache['tanhC_version'] = tanhC_version
+        # cache['drop_prob_encoder'] = drop_prob_encoder
+        # cache['drop_prob_decoder'] = drop_prob_decoder
+        # cache['Y'] = Y
+        cache['GRU'] = GRU
+        cache['Hout'] = Hout
+        cache['Hg'] = Hg
         cache['Wd'] = Wd
-        cache['bd'] = bd
+        cache['IFOGf'] = IFOGf
+        cache['IFOG'] = IFOG
         cache['X'] = X
-        cache['ones'] = ones
+        cache['Hin'] = Hin
         cache['tanhC_version'] = tanhC_version
         cache['drop_prob_encoder'] = drop_prob_encoder
         cache['drop_prob_decoder'] = drop_prob_decoder
-        cache['Y'] = Y
         if drop_prob_encoder > 0: cache['U'] = U  # keep the dropout masks around for backprop
         if drop_prob_decoder > 0: cache['U2'] = U2
-
       return Y, cache
 
-    def backward(dY, cache):
+  @staticmethod
+  def backward(dY, cache):
+    #
+    # Wd = cache['Wd']
+    # bd = cache['bd']
+    # s = cache['s']
+    # ones = cache['ones']
+    # GRU = cache['GRU']
+    # U = cache['U']
+    # W = cache['W']
+    # X = cache['X']
+    # Y = cache['Y']
+    Wd = cache['Wd']
+    Hout = cache['Hout']
+    IFOG = cache['IFOG']
+    IFOGf = cache['IFOGf']
+    Hin = cache['Hin']
+    GRU = cache['GRU']
+    X = cache['X']
+    Hg = cache['Hg']
+    # tanhC_version = cache['tanhC_version']
+    drop_prob_encoder = cache['drop_prob_encoder']
+    drop_prob_decoder = cache['drop_prob_decoder']
+    n, d = Hout.shape
+    # U = GRU[:,:d]
+    # W = GRU[:,d:2*d]
+    # ones =np.ones(3*d)
 
-      Wd = cache['Wd']
-      bd = cache['bd']
-      s = cache['s']
-      ones = cache['ones']
-      GRU = cache['GRU']
-      U = cache['U']
-      W = cache['W']
-      X = cache['X']
-      Y = cache['Y']
-      # tanhC_version = cache['tanhC_version']
-      drop_prob_encoder = cache['drop_prob_encoder']
-      drop_prob_decoder = cache['drop_prob_decoder']
-      n, d = s.shape
+    dY = np.row_stack([np.zeros(dY.shape[1]), dY])
+    dWd = Hout.transpose().dot(dY)
+    dbd = np.sum(dY, axis=0, keepdims=True)
+    dHout = dY.dot(Wd.transpose())
+    if drop_prob_decoder > 0:
+        dHout *= cache['U2']
 
-      prediction = T.argmax(Y, axis=1)
-      o_error = T.sum(T.nnet.categorical_crossentropy(Y, y))
-      cost = o_error
-      dones = T.grad(cost,ones)
-      dU = T.grad(cost, U)
-      dW = T.grad(cost, W)
-      dWb = T.grad(cost, Wd)
-      dbd = T.grad(cost, bd)
-      dX = T.grad(cost, X)
-      dGRU = np.row_stack([dones,dU,dW])
-      return {'GRU': dGRU, 'Wd': dWd, 'bd': dbd, 'dXi': dX[0, :], 'dXs': dX[1:, :]}
+    dIFOG = np.zeros(IFOG.shape)
+    dIFOGf = np.zeros(IFOGf.shape)
+    dGRU = np.zeros(GRU.shape)
+    dHin = np.zeros(Hin.shape)
+    dX = np.zeros(X.shape)
+    dHg = np.zeros(Hg.shape)
+    I = np.ones((1,d))
+
+    for t in reversed(xrange(n)):
+
+        if t>0:
+
+            dIFOGf[t, 2 * d:] = (I-IFOGf[t,:d]) * dHout[t]
+            dIFOGf[t, :d] = IFOGf[t, 2 * d:] * dHout[t] + Hout[t-1]* dHout[t]
+            dHout[t-1]+=dIFOGf[t, :d]* dHout[t]
 
 
+        # backprop activation functions
+        dIFOG[t, 2* d:] = (1 - IFOGf[t, 2 * d:] ** 2) * dIFOGf[t, 2 * d:]
+        y = IFOGf[t, :2 * d]
+        dIFOG[t, :2 * d] = (y * (1.0 - y)) * dIFOGf[t, :2 * d]
 
-    def predict(Xi, model, Ws, params, **kwargs):
+        # backprop matrix multiply
+        dGRU[:,:2*d] += np.outer(Hin[t], dIFOG[t,:2*d])
+        dGRU[:,2*d:] += np.outer(Hg[t] , dIFOG[t,2*d:])
+
+        dHin[t] = dIFOG[t,:3*d].dot(GRU[:,:3*d].transpose())
+        dHg[t] =  dIFOG[t,3*d:].dot(GRU[:,3*d:].transpose())
+        # backprop the identity transforms into Hin
+        dX[t] = dHin[t, 1:1 + d]
+        if t > 0:
+
+            dHout[t - 1] += (dHin[t, 1 + d:] +dHg[t,1+d:]*IFOG[t,d:2*d])
+
+    if drop_prob_encoder > 0:  # backprop encoder dropout
+        dX *= cache['U']
+
+    return {'GRU': dGRU, 'Wd': dWd, 'bd': dbd, 'dXi': dX[0, :], 'dXs': dX[1:, :]}
+
+
+  @staticmethod
+  def predict(Xi, model, Ws, params, **kwargs):
       """
       Run in prediction mode with beam search. The input is the vector Xi, which
       should be a 1-D array that contains the encoded image vector. We go from there.
@@ -164,18 +271,36 @@ class GRUGenerator:
       W = model['W']
 
       # lets define a helper function that does a single LSTM tick
-      def GRUtick(X, h_prev):
+      def GRUtick(x, h_prev):
         t = 0
-        z, r, c, s = np.zeros((1, d))
 
-        z = T.nnet.hard_sigmoid(U[t, :d].dot(X) + W[t, :d].dot(h_prev))
+        Hin = np.zeros((1, GRU.shape[0]))  # xt, ht-1, bias  hin-->hz
+        Hg = np.zeros((1, GRU.shape[0]))
+        Hout = np.zeros((1, d))  # hout --->hr
+        IFOG = np.zeros((1, d * 3))
+        IFOGf = np.zeros((1, d * 3))
 
-        r = T.nnet.hard_sigmoid(U[t, d:2 * d].dot(X[t]) + W[t, d:2 * d].dot(h_prev))
-        c = T.tanh(U[t, 2 * d:].dot(X) + W[t, 2 * d:].dot(h_prev * r[t]))
-        s = (T.ones_like(z[t]) - z[t]) * c[t] + z[t] * s[t - 1]
+        # set input
+        prev = np.zeros(d) if t == 0 else Hout[t - 1]
+        Hin[t, 0] =1
+        Hin[t, 1:1 + d] = x
+        Hin[t, 1 + d:] = h_prev
 
-        Y = s.dot(Wd) + bd
-        return (Y, s)  # return output, new hidden, new cell
+        # compute all gate activations. dots:
+        IFOG[t,:2*d] = Hin[t].dot(GRU[:, :2 * d])
+
+        Hg[t, :1 + d] = Hin[t, :1 + d]
+        Hg[t, 1 + d:] = Hin[t, 1 + d:] * IFOG[t, d:2 * d]
+        IFOG[t, 2 * d:] = Hg[t].dot(GRU[:, 2 * d:])
+
+        # non-linearities
+        IFOGf[t, :2 * d] = 1.0 / (1.0 + np.exp(-IFOG[t, :2 * d]))  # sigmoids; these are the gates
+        IFOGf[t, 2 * d:] = np.tanh(IFOG[t, 2 * d:])  # tanh
+
+        # compute the cell activation
+        Hout[t] = (1 - IFOGf[t, :d]) * IFOGf[t, 2 * d:] + IFOGf[t, :d] * h_prev
+        Y = Hout.dot(Wd) + bd
+        return (Y, Hout)  # return output, new hidden, new cell
 
       # forward prop the image
       (y0, h) = GRUtick(Xi, np.zeros(d))
